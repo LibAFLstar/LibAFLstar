@@ -1,0 +1,35 @@
+[package]
+name = "libaflstar"
+version = "0.1.1"
+edition = "2021"
+keywords = [
+    "testing",
+    "security",
+    "stateful fuzzing",
+    "protocol fuzzing",
+    "persistent mode",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[lib]
+name = "libaflstar"
+path = "src/lib.rs"
+
+[profile.dev]
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[dependencies]
+ciborium = "0.2.2"
+clap = { version = "4.4.10", features = ["derive"] }
+env_logger = "0.11.1"
+libafl = { git = "https://github.com/AFLplusplus/LibAFL", rev = "2bfe91e4bd5a5678a" }
+libafl_bolts = { git = "https://github.com/AFLplusplus/LibAFL", rev = "2bfe91e4bd5a5678a" }
+log = "0.4.20"
+nix = "0.27"
+serde = { version = "1.0.193", features = ["derive"] }
+signal-hook = "0.3.17"

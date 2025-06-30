@@ -1,0 +1,193 @@
+diff --git a/BasicUsageEnvironment/BasicTaskScheduler.cpp b/BasicUsageEnvironment/BasicTaskScheduler.cpp
+index 97571d6..3cd8671 100644
+--- a/BasicUsageEnvironment/BasicTaskScheduler.cpp
++++ b/BasicUsageEnvironment/BasicTaskScheduler.cpp
+@@ -87,7 +87,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
+     tv_timeToDelay.tv_usec = maxDelayTime%MILLION;
+   }
+ 
+-  int selectResult = select(fMaxNumSockets, &readSet, &writeSet, &exceptionSet, &tv_timeToDelay);
++  int selectResult = select(fMaxNumSockets, &readSet, &writeSet, &exceptionSet, NULL);
+   if (selectResult < 0) {
+ #if defined(__WIN32__) || defined(_WIN32)
+     int err = WSAGetLastError();
+diff --git a/BasicUsageEnvironment/BasicTaskScheduler0.cpp b/BasicUsageEnvironment/BasicTaskScheduler0.cpp
+index aaab28e..9a3833b 100644
+--- a/BasicUsageEnvironment/BasicTaskScheduler0.cpp
++++ b/BasicUsageEnvironment/BasicTaskScheduler0.cpp
+@@ -19,6 +19,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ 
+ #include "BasicUsageEnvironment0.hh"
+ #include "HandlerSet.hh"
++#include <stdio.h>
++
++#include "../EventLoopControl.hh"
++int customWatchVariable =0;
+ 
+ ////////// A subclass of DelayQueueEntry,
+ //////////     used to implement BasicTaskScheduler0::scheduleDelayedTask()
+@@ -79,6 +83,10 @@ void BasicTaskScheduler0::doEventLoop(char volatile* watchVariable) {
+   // Repeatedly loop, handling readble sockets and timed events:
+   while (1) {
+     if (watchVariable != NULL && *watchVariable != 0) break;
++    if (customWatchVariable == 1) {
++      customWatchVariable = 0;
++      break;
++    }
+     SingleStep();
+   }
+ }
+diff --git a/EventLoopControl.hh b/EventLoopControl.hh
+new file mode 100644
+index 0000000..3bf2c29
+--- /dev/null
++++ b/EventLoopControl.hh
+@@ -0,0 +1,6 @@
++#ifndef EVENT_LOOP_CONTROL_HH
++#define EVENT_LOOP_CONTROL_HH
++
++extern int customWatchVariable; // Declare the variable
++
++#endif // EVENT_LOOP_CONTROL_HH
+diff --git a/config.linux b/config.linux
+index b4021ef..b12ff16 100644
+--- a/config.linux
++++ b/config.linux
+@@ -1,12 +1,12 @@
+ COMPILE_OPTS =		$(INCLUDES) -I/usr/local/include -I. -O2 -DSOCKLEN_T=socklen_t -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64
+ C =			c
+-C_COMPILER =		cc
++C_COMPILER =		afl-cc
+ C_FLAGS =		$(COMPILE_OPTS) $(CPPFLAGS) $(CFLAGS)
+ CPP =			cpp
+-CPLUSPLUS_COMPILER =	c++
++CPLUSPLUS_COMPILER =	afl-cc
+ CPLUSPLUS_FLAGS =	$(COMPILE_OPTS) -Wall -DBSD=1 $(CPPFLAGS) $(CXXFLAGS)
+ OBJ =			o
+-LINK =			c++ -o
++LINK =			afl-cc -lstdc++ -o
+ LINK_OPTS =		-L. $(LDFLAGS)
+ CONSOLE_LINK_OPTS =	$(LINK_OPTS)
+ LIBRARY_LINK =		ar cr 
+diff --git a/groupsock/GroupsockHelper.cpp b/groupsock/GroupsockHelper.cpp
+index eed5770..05a30ca 100644
+--- a/groupsock/GroupsockHelper.cpp
++++ b/groupsock/GroupsockHelper.cpp
+@@ -59,7 +59,7 @@ static void socketErr(UsageEnvironment& env, char const* errorMsg) {
+ 
+ NoReuse::NoReuse(UsageEnvironment& env)
+   : fEnv(env) {
+-  groupsockPriv(fEnv)->reuseFlag = 0;
++  groupsockPriv(fEnv)->reuseFlag = 1;
+ }
+ 
+ NoReuse::~NoReuse() {
+diff --git a/liveMedia/GenericMediaServer.cpp b/liveMedia/GenericMediaServer.cpp
+index 332ac2b..5efc75e 100644
+--- a/liveMedia/GenericMediaServer.cpp
++++ b/liveMedia/GenericMediaServer.cpp
+@@ -399,9 +399,9 @@ GenericMediaServer::ClientSession* GenericMediaServer::createNewClientSessionWit
+   // because that has a special use by some servers.  Similarly, we avoid choosing the same
+   // session id twice in a row.)
+   do {
+-    sessionId = (u_int32_t)our_random32();
++    sessionId = (u_int32_t)8888;
+     snprintf(sessionIdStr, sizeof sessionIdStr, "%08X", sessionId);
+-  } while (sessionId == 0 || sessionId == fPreviousClientSessionId
++  } while (sessionId == 0
+ 	   || lookupClientSession(sessionIdStr) != NULL);
+   fPreviousClientSessionId = sessionId;
+ 
+diff --git a/liveMedia/RTSPServer.cpp b/liveMedia/RTSPServer.cpp
+index 32d77db..8c86436 100644
+--- a/liveMedia/RTSPServer.cpp
++++ b/liveMedia/RTSPServer.cpp
+@@ -23,6 +23,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
+ #include "RTSPRegisterSender.hh"
+ #include "Base64.hh"
+ #include <GroupsockHelper.hh>
++#include "../EventLoopControl.hh"
+ 
+ ////////// RTSPServer implementation //////////
+ 
+@@ -31,7 +32,7 @@ RTSPServer::createNew(UsageEnvironment& env, Port ourPort,
+ 		      UserAuthenticationDatabase* authDatabase,
+ 		      unsigned reclamationSeconds) {
+   int ourSocketIPv4 = setUpOurSocket(env, ourPort, AF_INET);
+-  int ourSocketIPv6 = setUpOurSocket(env, ourPort, AF_INET6);
++  int ourSocketIPv6 = -1;
+   if (ourSocketIPv4 < 0 && ourSocketIPv6 < 0) return NULL;
+   
+   return new RTSPServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, authDatabase, reclamationSeconds);
+@@ -710,6 +711,7 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
+       fprintf(stderr, "RTSPClientConnection[%p]::handleRequestBytes() read %d new bytes (of %d); terminating connection!\n", this, newBytesRead, fRequestBufferBytesLeft);
+ #endif
+       fIsActive = False;
++      customWatchVariable = 1;
+       break;
+     }
+     
+@@ -999,23 +998,23 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
+     // Check whether there are extra bytes remaining in the buffer, after the end of the request (a rare case).
+     // If so, move them to the front of our buffer, and keep processing it, because it might be a following, pipelined request.
+     unsigned requestSize = (fLastCRLF+4-fRequestBuffer) + contentLength;
+-    numBytesRemaining = fRequestBytesAlreadySeen - requestSize;
+-    resetRequestBuffer(); // to prepare for any subsequent request
+-    
+-    if (numBytesRemaining > 0) {
++    numBytesRemaining = 0;//fRequestBytesAlreadySeen - requestSize;
++    //resetRequestBuffer(); // to prepare for any subsequent request
++    /*if (numBytesRemaining > 0) {
+       memmove(fRequestBuffer, &fRequestBuffer[requestSize], numBytesRemaining);
+       newBytesRead = numBytesRemaining;
+-    }
++    }*/
+   } while (numBytesRemaining > 0);
+-  
++  resetRequestBuffer(); // to prepare for any subsequent request
++  customWatchVariable = 1;
+   --fRecursionCount;
+   // If it has a scheduledDelayedTask, don't delete the instance or close the sockets. The sockets can be reused in the task.
+-  if (!fIsActive && fScheduledDelayedTask <= 0) {
+-    if (fRecursionCount > 0) closeSockets(); else delete this;
++  //if (!fIsActive && fScheduledDelayedTask <= 0) {
++  //  if (fRecursionCount > 0) closeSockets(); else delete this;
+     // Note: The "fRecursionCount" test is for a pathological situation where we reenter the event loop and get called recursively
+     // while handling a command (e.g., while handling a "DESCRIBE", to get a SDP description).
+     // In such a case we don't want to actually delete ourself until we leave the outermost call.
+-  }
++  //}
+ }
+ 
+ #define SKIP_WHITESPACE while (*fields != '\0' && (*fields == ' ' || *fields == '\t')) ++fields
+diff --git a/liveMedia/RTSPServerRegister.cpp b/liveMedia/RTSPServerRegister.cpp
+index 2702904..1245a4f 100644
+--- a/liveMedia/RTSPServerRegister.cpp
++++ b/liveMedia/RTSPServerRegister.cpp
+@@ -312,7 +312,7 @@ void RTSPServer::RTSPClientConnection::continueHandlingREGISTER1(ParamsForREGIST
+     // deleting this.
+     fClientInputSocket = fClientOutputSocket = -1; // so the socket doesn't get closed when we get deleted
+     delete this;
+-  } else if (!fIsActive && fRecursionCount <= 0 && fScheduledDelayedTask <= 0) {
++  } else if (!fIsActive) {
+     delete this;
+   }
+   
+diff --git a/testProgs/testOnDemandRTSPServer.cpp b/testProgs/testOnDemandRTSPServer.cpp
+index 3696a77..57a1aff 100644
+--- a/testProgs/testOnDemandRTSPServer.cpp
++++ b/testProgs/testOnDemandRTSPServer.cpp
+@@ -458,9 +458,10 @@ int main(int argc, char** argv) {
+   } else {
+     *env << "\n(RTSP-over-" << httpProtocolStr << " tunneling is not available.)\n";
+   }
+-
+-  env->taskScheduler().doEventLoop(); // does not return
+-
++  while(__AFL_LOOP(INT64_MAX)) {
++  //for(int i=0; i<2; i++){
++    env->taskScheduler().doEventLoop(); // does not return
++  }
+   return 0; // only to prevent compiler warning
+ }
+ 

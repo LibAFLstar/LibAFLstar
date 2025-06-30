@@ -1,0 +1,91 @@
+diff --git a/Source/Release/makefile b/Source/Release/makefile
+index 2241106..d3014fd 100644
+--- a/Source/Release/makefile
++++ b/Source/Release/makefile
+@@ -27,8 +27,8 @@ all: fftp
+ # Tool invocations
+ fftp: $(OBJS) $(USER_OBJS)
+ 	@echo 'Building target: $@'
+-	@echo 'Invoking: GCC C Linker'
+-	gcc  -o "fftp" $(OBJS) $(USER_OBJS) $(LIBS)
++	@echo 'Invoking: $(CC) Linker'
++	$(CC) $(CFLAGS) -o "fftp" $(OBJS) $(USER_OBJS) $(LIBS)
+ 	@echo 'Finished building target: $@'
+ 	@echo ' '
+ 
+diff --git a/Source/Release/subdir.mk b/Source/Release/subdir.mk
+index f520c4d..bcf6f32 100644
+--- a/Source/Release/subdir.mk
++++ b/Source/Release/subdir.mk
+@@ -26,7 +26,7 @@ C_DEPS += \
+ %.o: ../%.c
+ 	@echo 'Building file: $<'
+ 	@echo 'Invoking: GCC C Compiler'
+-	gcc -std=c99 -O3 -Wall -Wextra -c -fmessage-length=0 -Wno-unused-parameter -Wno-unused-result -fno-ident -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
++	$(CC) $(CFLAGS) -std=c99 -O3 -Wall -Wextra -c -fmessage-length=0 -Wno-unused-parameter -Wno-unused-result -fno-ident -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+ 	@echo 'Finished building: $<'
+ 	@echo ' '
+ 
+diff --git a/Source/ftpserv.c b/Source/ftpserv.c
+index d63d993..bebc014 100644
+--- a/Source/ftpserv.c
++++ b/Source/ftpserv.c
+@@ -1910,9 +1910,16 @@ void *ftp_client_thread(SOCKET *s)
+ 
+ 		writelogentry(&ctx, rcvbuf, "");
+ 
+-		while ( ctx.ControlSocket != INVALID_SOCKET ) {
+-			if ( !recvcmd(&ctx, rcvbuf, sizeof(rcvbuf)) )
++		writelogentry(&ctx, "INSTR: Entering AFL_LOOP", "");
++		while (__AFL_LOOP(1000)){
++			if (ctx.ControlSocket == INVALID_SOCKET){
++				writelogentry(&ctx, "INSTR: Invalid socket", "");
+ 				break;
++			}
++			if (!recvcmd(&ctx, rcvbuf, sizeof(rcvbuf))){
++				writelogentry(&ctx, "INSTR: RECV_CMD FAILED", "");
++				break;
++			}
+ 
+ 			i = 0;
+ 			while ((rcvbuf[i] != 0) && (isalpha(rcvbuf[i]) == 0))
+@@ -1949,8 +1956,8 @@ void *ftp_client_thread(SOCKET *s)
+ 			if ( cmdno == -1 )
+ 				sendstring(&ctx, error500);
+ 
+-			if ( rv <= 0 )
+-				break;
++			/*if ( rv <= 0 )
++				break;*/
+ 		};
+ 
+ 		WorkerThreadCleanup(&ctx);
+@@ -2036,6 +2043,9 @@ void *ftpmain(void *p)
+ 				close(clientsocket);
+ 			}
+ 		}
++		// Terminate the main thread when the child thread terminates
++		pthread_join(th, NULL);
++		break;
+ 	}
+ 
+ 	free(scb);
+diff --git a/Source/main.c b/Source/main.c
+index eaa1a55..ad37277 100644
+--- a/Source/main.c
++++ b/Source/main.c
+@@ -188,10 +188,12 @@ int main(int argc, char *argv[])
+ 			break;
+ 		}
+ 
+-		do {
++		//Terminate the server when the main thread terminates
++		pthread_join(thid, NULL);
++		/*do {
+ 			c = getc(stdin);
+ 			sleep(1);
+-		} while ((c != 'q') && (c != 'Q'));
++		} while ((c != 'q') && (c != 'Q'));*/
+ 
+ 		break;
+ 	}

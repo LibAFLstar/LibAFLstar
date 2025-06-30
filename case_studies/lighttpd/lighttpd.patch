@@ -1,0 +1,71 @@
+diff --git a/src/connections.c b/src/connections.c
+index 51afa665..934a909e 100644
+--- a/src/connections.c
++++ b/src/connections.c
+@@ -151,19 +151,25 @@ static void connection_handle_shutdown(connection *con) {
+ 	connection_reset(con);
+ 
+ 	/* close the connection */
+-	if (con->fd >= 0
+-	    && (con->is_ssl_sock || 0 == shutdown(con->fd, SHUT_WR))) {
+-		con->close_timeout_ts = log_monotonic_secs;
+-
+-		request_st * const r = &con->request;
+-		connection_set_state(r, CON_STATE_CLOSE);
+-		if (r->conf.log_state_handling) {
+-			log_error(r->conf.errh, __FILE__, __LINE__,
+-			  "shutdown for fd %d", con->fd);
+-		}
+-	} else {
+-		connection_close(con);
+-	}
++	// if (con->fd >= 0
++	//     && (con->is_ssl_sock || 0 == shutdown(con->fd, SHUT_WR))) {
++	// 	con->close_timeout_ts = log_monotonic_secs;
++
++	// 	request_st * const r = &con->request;
++	// 	connection_set_state(r, CON_STATE_CLOSE);
++	// 	if (r->conf.log_state_handling) {
++	// 		log_error(r->conf.errh, __FILE__, __LINE__,
++	// 		  "shutdown for fd %d", con->fd);
++	// 	}
++	// } else {
++	// 	connection_close(con);
++	// }
++    request_reset_ex(&con->request); /*(r->conf.* is still valid below)*/
++    chunkqueue_reset(con->read_queue);
++    con->request_count = 0;
++    con->is_ssl_sock = 0;
++    con->revents_err = 0;
++    connection_set_state(&con->request, CON_STATE_REQUEST_START);
+ }
+ 
+ 
+diff --git a/src/server.c b/src/server.c
+index 44385db1..975104da 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -2194,6 +2194,9 @@ static void server_main_loop (server * const srv) {
+ 			server_load_check(srv);
+ 		}
+ 
++		while (__AFL_LOOP(INT64_MAX))
++		{
++			fdevent_poll(srv->ev, -1);
+ 	  #ifndef _MSC_VER
+ 		static
+ 	  #endif
+@@ -2202,9 +2205,11 @@ static void server_main_loop (server * const srv) {
+ 		connection * const joblist = log_con_jqueue;
+ 		log_con_jqueue = sentinel;
+ 		server_run_con_queue(joblist, sentinel);
++		}
++		srv_shutdown = 1;
+ 
+-		if (fdevent_poll(srv->ev, log_con_jqueue != sentinel ? 0 : 1000) > 0)
+-			last_active_ts = log_monotonic_secs;
++		// if (fdevent_poll(srv->ev, log_con_jqueue != sentinel ? 0 : 1000) > 0)
++		// 	last_active_ts = log_monotonic_secs;
+ 	}
+ }
+ 

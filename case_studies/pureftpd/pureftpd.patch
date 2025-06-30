@@ -1,0 +1,203 @@
+diff --git a/src/alt_arc4random.c b/src/alt_arc4random.c
+index 81bdfc7..febab8f 100644
+--- a/src/alt_arc4random.c
++++ b/src/alt_arc4random.c
+@@ -137,6 +137,9 @@ static int random_dev_open(void)
+ 
+ void alt_arc4random_stir(void)
+ {
++    // Disable the random number generator
++    memset(&rng_state, 0, sizeof(rng_state));
++    return;
+     if (rng_state.initialized == 0) {
+         rng_state.fd = -1;
+     }
+@@ -154,6 +157,10 @@ void alt_arc4random_stir(void)
+ 
+ void alt_arc4random_buf(void* buffer, size_t len)
+ {
++    // Disable the random number generator
++    memset(buffer, 0, len);
++    return;
++
+     unsigned char *buffer_ = (unsigned char*)buffer;
+     size_t         off;
+     size_t         remaining;
+diff --git a/src/ftp_parser.c b/src/ftp_parser.c
+index f2da2f6..9b9f825 100644
+--- a/src/ftp_parser.c
++++ b/src/ftp_parser.c
+@@ -35,7 +35,7 @@ static void antiidle(void)
+ 
+ static void randomdelay(void)
+ {
+-    usleep(rand() % 15000UL);
++    return;
+ }
+ 
+ /*
+@@ -233,7 +233,9 @@ void parser(void)
+     (void) tls_init_new_session();
+     data_protection_level = CPL_PRIVATE;
+ #endif
+-    for (;;) {
++    //for (;;) {
++    while(__AFL_LOOP(1000)) {
++    //for(int i=0; i<10; i++){ //for debug
+         xferfd = -1;
+         if (state_needs_update != 0) {
+             state_needs_update = 0;
+diff --git a/src/ftpd.c b/src/ftpd.c
+index 60b95b6..340913d 100644
+--- a/src/ftpd.c
++++ b/src/ftpd.c
+@@ -65,7 +65,8 @@ static void enablesignals(void)
+ }
+ 
+ void usleep2(const unsigned long microsec)
+-{
++{   
++    return;
+     disablesignals();
+     usleep(microsec);
+     enablesignals();
+@@ -2405,7 +2406,7 @@ void opendata(void)
+         pfd->revents = 0;
+ 
+         alarm(idletime);
+-        for (;;) {
++        /*for (;;) {
+             pfds[0].revents = pfds[1].revents = 0;
+             pollret = poll(pfds, sizeof pfds / sizeof pfds[0], idletime * 1000UL);
+             if (pollret <= 0) {
+@@ -2444,6 +2445,7 @@ void opendata(void)
+                 break;
+             }
+         }
++        */
+         addreply_noformat(150, MSG_ACCEPT_SUCCESS);
+     } else {
+         struct sockaddr_storage peer2;
+@@ -4623,7 +4625,7 @@ static void fixlimits(void)
+     lim.rlim_max = lim.rlim_cur = MAX_CPU_TIME;
+     setrlimit(RLIMIT_CPU, &lim);
+     lim.rlim_max = lim.rlim_cur = MAX_DATA_SIZE;
+-    setrlimit(RLIMIT_DATA, &lim);
++    //setrlimit(RLIMIT_DATA, &lim);
+ # ifndef DEBUG
+     lim.rlim_max = lim.rlim_cur = 0;
+     setrlimit(RLIMIT_CORE, &lim);
+@@ -4846,8 +4848,8 @@ static void fill_atomic_prefix(void)
+              ATOMIC_PREFIX_PREFIX,
+              (unsigned long) session_start_time,
+              (unsigned int) serverport,
+-             (unsigned long) getpid(),
+-             zrand());
++             0,
++             0); // Do not use the PID here and random
+     if ((atomic_prefix = strdup(tmp_atomic_prefix)) == NULL) {
+         die_mem();
+     }
+@@ -4857,10 +4859,10 @@ static void doit(void)
+ {
+     socklen_t socksize;
+     unsigned int users = 0U;
+-    int display_banner = 1;
++    int display_banner = 0; //Do not display the banner for time saving
+ 
+     client_init_reply_buf();
+-    session_start_time = time(NULL);
++    session_start_time = 0; // Do not use the time here
+     fixlimits();
+ #ifdef F_SETOWN
+     fcntl(clientfd, F_SETOWN, getpid());
+@@ -4985,13 +4987,7 @@ static void doit(void)
+ #endif
+     /* Back to the client - Get the 5 min load average */
+     {
+-        double load_[2];
+-
+-        if (getloadavg(load_, sizeof load_ / sizeof load_[0]) < 0) {
+-            load = 0.0;
+-        } else {
+-            load = load_[1];
+-        }
++        load = 0.0; // Do not use the load here
+     }
+ #ifndef NON_ROOT_FTP
+     wd[0] = '/';
+@@ -5278,7 +5274,7 @@ static void accept_client(const int active_listen_fd) {
+     sigaddset(&set, SIGCHLD);
+     sigprocmask(SIG_BLOCK, &set, NULL);
+     nb_children++;
+-    child = fork();
++    child = 0;
+     if (child == (pid_t) 0) {
+         if (isatty(2)) {
+             (void) close(2);
+@@ -5289,7 +5285,11 @@ static void accept_client(const int active_listen_fd) {
+             openlog("pure-ftpd", LOG_NDELAY | log_pid, syslog_facility);
+         }
+ #endif
+-        doit();
++        //while (__AFL_LOOP(1000000)) {
++        //for(int i=0; i<3; i++){
++            doit();
++        //}
++        return;
+         _EXIT(EXIT_SUCCESS);
+     } else if (child == (pid_t) -1) {
+         if (nb_children > 0U) {
+@@ -5407,17 +5407,18 @@ static void standalone_server(void)
+         safe_fd_set(listenfd, &rs);
+         safe_fd_set(listenfd6, &rs);
+         if (select(max_fd, &rs, NULL, NULL, NULL) <= 0) {
+-            if (errno != EINTR) {
++            /*if (errno != EINTR) {
+                 (void) sleep(1);
+-            }
++            }*/
+             continue;
+         }
+         if (safe_fd_isset(listenfd, &rs)) {
+             accept_client(listenfd);
+         }
+-        if (safe_fd_isset(listenfd6, &rs)) {
++        /*if (safe_fd_isset(listenfd6, &rs)) {
+             accept_client(listenfd6);
+-        }
++        }*/
++        stop_server = 0;
+     }
+ }
+ #endif
+@@ -6186,6 +6187,7 @@ int pureftpd_start(int argc, char *argv[], const char *home_directory_)
+     } else {
+         doit();
+     }
++    return 0;
+ #elif !defined(NO_STANDALONE) && defined(NO_INETD)
+     standalone_server();
+ #elif defined(NO_STANDALONE) && !defined(NO_INETD)
+diff --git a/src/ftpd_p.h b/src/ftpd_p.h
+index f39248f..b1bf4e9 100644
+--- a/src/ftpd_p.h
++++ b/src/ftpd_p.h
+@@ -35,12 +35,12 @@
+ #define DEFAULT_BACKLOG 42
+ #define DEFAULT_BACKLOG_DATA 8
+ #define NICE_VALUE 10
+-#define THROTTLING_UNIT 10000UL
++#define THROTTLING_UNIT 0
+ #define MAX_GROUPS 256
+-#define MAX_PASSWD_TRIES 5        /* Abort after 5 authentication failures */
+-#define PASSWD_FAILURE_DELAY (3UL*1000000UL)    /* Delay after each failure */
+-#define MAX_DIRSCAN_TRIES 50      /* Abort after 50 chdir failures */
+-#define DIRSCAN_FAILURE_DELAY (100000UL)  /* Delay after each chdir failure */
++#define MAX_PASSWD_TRIES 1000        /* Abort after 5 authentication failures */
++#define PASSWD_FAILURE_DELAY (0)    /* Delay after each failure */
++#define MAX_DIRSCAN_TRIES 1000      /* Abort after 50 chdir failures */
++#define DIRSCAN_FAILURE_DELAY (0)  /* Delay after each chdir failure */
+ #define ASCII_CHUNKSIZE 65536U
+ #define BANNER_MAXLINES 100
+ #define MAX_SERVER_REPLY_LEN (PATH_MAX + (size_t) 50U)

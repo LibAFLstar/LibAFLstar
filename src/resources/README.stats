@@ -1,0 +1,50 @@
+# Output directory explanation
+
+This README contains information about what the files in this output directory mean.
+
+## crashes
+This is where the fuzzer stores any crashing test cases it has found.
+
+## replay_traces (if enabled)
+
+Traces of every input and corresponding output of the target.
+Each time the target (re)starts, a new trace file is created. All requests and responses are then appended to this file.
+
+The file is in CBOR format.
+
+## .states
+
+This is where state that the fuzzer uses is stored. These are not results, but the corpus for each state.
+
+## stats.json
+
+Intermediate statistics. These similar to what is also printed to screen when the fuzzer runs, i.e., Statistics over time.
+
+### "clients"
+
+A client is actually a target state. The first few entries might have fewer clients, because some states have never been run before.
+
+- "corpus_size" -> number of useful test cases found.
+- "executions"  -> number of test cases executed in this target state
+- "last_objective_time" -> time that has past since finding the last objective, i.e., crash. 0 means no crash was found.
+- "last_window_time" -> not sure
+- "prev_state_executions" -> not sure
+- "user_monitor" -> extra stats from fuzzing components, in our case only the coverage ratio, i.e., how many branches have been found over how many branches are instrumented.
+
+### Remaining
+
+Remaining are some grouped stats, basically, the aggregates of the clients.
+
+## total_stats_info.txt
+
+- The cli options that the fuzzer was invoked with.
+- Some overall stats computed when the fuzzers quits.
+- Cycles: How many times each target state was chosen by the state scheduler.
+
+- The exact type of every component used, just in case in order:
+    - Fuzzer 
+    - Stages 
+    - Executor 
+    - State 
+    - Manager 
+    - State Scheduler

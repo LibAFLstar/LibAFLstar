@@ -1,0 +1,44 @@
+diff --git a/src/main.c b/src/main.c
+index d4ae3186b..ca593dd47 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -901,7 +901,7 @@ static cmd_rec *make_ftp_cmd(pool *p, char *buf, size_t buflen, int flags) {
+ 
+ static void cmd_loop(server_rec *server, conn_t *c) {
+ 
+-  while (TRUE) {
++  while (__AFL_LOOP(1000)) {
+     int res = 0;
+     cmd_rec *cmd = NULL;
+ 
+@@ -1768,6 +1768,7 @@ static void daemon_loop(void) {
+     /* Do not continue the while() loop here if not daemonizing. */
+     break;
+ #endif /* PR_DEVEL_NO_DAEMON */
++    break;
+   }
+ }
+ 
+diff --git a/src/random.c b/src/random.c
+index ad7219fd9..431c2b624 100644
+--- a/src/random.c
++++ b/src/random.c
+@@ -29,13 +29,15 @@
+  */
+ int pr_random_init(void) {
+ #if defined(HAVE_RANDOM)
+-  struct timeval tv;
++  /*struct timeval tv;
+ 
+   gettimeofday(&tv, NULL);
+-  srandom(getpid() ^ tv.tv_usec);
++  srandom(getpid() ^ tv.tv_usec);*/
++  srandom(0);
+ #endif /* HAVE_RANDOM */
+ 
+-  srand((unsigned int) (getpid() * time(NULL)));
++  //srand((unsigned int) (getpid() * time(NULL)));
++  srand(0);
+   return 0;
+ }
+ 
