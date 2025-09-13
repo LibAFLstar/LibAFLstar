@@ -1,0 +1,224 @@
+diff --git a/src/examples/example_server.cpp b/src/examples/example_server.cpp
+index 9a9d6fb..ca8e6c9 100644
+--- a/src/examples/example_server.cpp
++++ b/src/examples/example_server.cpp
+@@ -18,7 +18,6 @@
+ 
+ 
+ 
+-
+ using namespace OpcUa;
+ 
+ class SubClient : public SubscriptionHandler
+@@ -43,11 +42,11 @@ void RunServer()
+   auto logger = spdlog::stderr_color_mt("server");
+   OpcUa::UaServer server(logger);
+   server.SetEndpoint("opc.tcp://localhost:4840/freeopcua/server");
+-  server.SetServerURI("urn://exampleserver.freeopcua.github.io");
++  //server.SetServerURI("urn://exampleserver.freeopcua.github.io");
+   server.Start();
+ 
+   //then register our server namespace and get its index in server
+-  uint32_t idx = server.RegisterNamespace("http://examples.freeopcua.github.io");
++  /*uint32_t idx = server.RegisterNamespace("http://examples.freeopcua.github.io");
+ 
+   //Create our address space using different methods
+   Node objects = server.GetObjectsNode();
+@@ -83,7 +82,7 @@ void RunServer()
+ 
+ 
+   //Now write values to address space and send events so clients can have some fun
+-  uint32_t counter = 0;
++  /*uint32_t counter = 0;
+   myvar.SetValue(Variant(counter)); //will change value and trigger datachange event
+ 
+   //Create event
+@@ -107,11 +106,12 @@ void RunServer()
+       std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+     }
+ 
+-  server.Stop();
++  server.Stop();*/
+ }
+ 
+ int main(int argc, char ** argv)
+ {
++  __AFL_INIT();
+   try
+     {
+       RunServer();
+diff --git a/src/server/opc_tcp_async.cpp b/src/server/opc_tcp_async.cpp
+index a4b3342..e2f281e 100644
+--- a/src/server/opc_tcp_async.cpp
++++ b/src/server/opc_tcp_async.cpp
+@@ -34,7 +34,24 @@
+ #include <iostream>
+ #include <set>
+ 
+-
++// Define the helper function template in the global namespace.
++// The template is necessary because the 
++// The global function now only calls a public method.
++template <typename T>
++void run_afl_loop(T *connection)
++{
++  try
++  {
++    while (__AFL_LOOP(INT_MAX))
++    {
++      connection->AflLoopBody();
++    }
++  }
++  catch (const std::exception &e)
++  {
++    //LOG_ERROR(connection->Logger, "opc_tcp_sync          | connection error: {}", e.what());
++  }
++}
+ 
+ namespace
+ {
+@@ -71,6 +88,7 @@ private:
+   Parameters Params;
+   Services::SharedPtr Server;
+   Common::Logger::SharedPtr Logger;
++  boost::asio::io_service & IoService;
+   std::mutex Mutex;
+   std::set<std::shared_ptr<OpcTcpConnection>> Clients;
+ 
+@@ -95,6 +113,8 @@ public:
+   ~OpcTcpConnection();
+ 
+   void Start();
++  void StartSync();
++  void AflLoopBody();
+ 
+   virtual void Stop()
+   {
+@@ -165,6 +185,54 @@ void OpcTcpConnection::Start()
+   ReadNextData();
+ }
+ 
++void OpcTcpConnection::StartSync()
++{
++  run_afl_loop(this);
++}
++
++void OpcTcpConnection::AflLoopBody()
++{
++  try {
++    // 1) Read header
++    std::size_t hdrSz = GetHeaderSize();
++    boost::asio::read(Socket, boost::asio::buffer(Buffer.data(), hdrSz));
++    OpcUa::InputFromBuffer hdrBuf(Buffer.data(), hdrSz);
++    IStreamBinary hdrIn(hdrBuf);
++    OpcUa::Binary::Header header;
++    hdrIn >> header;
++
++    // Print the header
++    printf("Received header: Type: %d, ChunkType: %d, Size: %d\n", header.Type, header.Chunk, header.Size);
++
++    // 2) Read body
++    std::size_t bodySz = header.Size - hdrSz;
++    if (bodySz > Buffer.size())
++    {
++      Buffer.resize(bodySz);
++    }
++    boost::asio::read(Socket, boost::asio::buffer(Buffer.data(), bodySz));
++
++    // Print the body
++    printf("Received body: %s\n", Buffer.data());
++
++    // 3) Dispatch
++    OpcUa::InputFromBuffer msgBuf(Buffer.data(), bodySz);
++    IStreamBinary msgIn(msgBuf);
++    try {
++      bool cont = MessageProcessor->ProcessMessage(header.Type, msgIn);
++      // Print continue or not
++      printf("Continue: %d\n", cont);
++    } catch (...) {
++        // If an exception occurs, a response will not be sent. We force a response with an error.
++        printf("Sending an error\n");
++        MessageProcessor->SendError();
++    }
++  } catch (...) {
++    printf("Sending an error, but the message is not invalid\n");
++    MessageProcessor->SendError();
++  }
++}
++
+ void OpcTcpConnection::ReadNextData()
+ {
+   // do not lose reference to shared instance even if another
+@@ -270,9 +338,9 @@ void OpcTcpConnection::ProcessMessage(OpcUa::Binary::MessageType type, const boo
+ void OpcTcpConnection::GoodBye()
+ {
+   // reference to shared instance
+-  OpcTcpConnection::SharedPtr self = shared_from_this();
+-  TcpServer.RemoveClient(self);
+-  LOG_DEBUG(Logger, "opc_tcp_async         | good bye");
++  //OpcTcpConnection::SharedPtr self = shared_from_this();
++  //TcpServer.RemoveClient(self);
++  //LOG_DEBUG(Logger, "opc_tcp_async         | good bye");
+ }
+ 
+ void OpcTcpConnection::Send(const char * message, std::size_t size)
+@@ -301,6 +369,7 @@ OpcTcpServer::OpcTcpServer(const AsyncOpcTcp::Parameters & params, Services::Sha
+   : Params(params)
+   , Server(server)
+   , Logger(logger)
++  , IoService(ioService)            // <<< capture it
+   , socket(ioService)
+   , acceptor(ioService)
+ {
+@@ -333,7 +402,15 @@ void OpcTcpServer::Listen()
+   LOG_DEBUG(Logger, "opc_tcp_async         | waiting for client connection at: {}:{}", acceptor.local_endpoint().address(), acceptor.local_endpoint().port());
+   acceptor.listen();
+ 
+-  Accept();
++  boost::system::error_code ec;
++  tcp::socket clientSocket(IoService);
++  acceptor.accept(clientSocket, ec);
++  if (ec) {
++    LOG_ERROR(Logger, "opc_tcp_async         | accept failed: {}", ec.message());
++    return;
++  }
++  auto conn = OpcTcpConnection::create(std::move(clientSocket), *this, Server, Logger);
++  conn->StartSync();
+ }
+ 
+ void OpcTcpServer::Shutdown()
+diff --git a/src/server/opc_tcp_processor.cpp b/src/server/opc_tcp_processor.cpp
+index e24307e..82e4cbe 100644
+--- a/src/server/opc_tcp_processor.cpp
++++ b/src/server/opc_tcp_processor.cpp
+@@ -181,6 +181,18 @@ void OpcTcpMessages::ForwardPublishResponse(const PublishResult result)
+   OutputStream << secureHeader << requestData.algorithmHeader << requestData.sequence << response << flush;
+ }
+ 
++
++void OpcTcpMessages::SendError()
++{
++  using namespace OpcUa::Binary;
++
++  Header ackHeader(MT_ERROR, CHT_SINGLE);
++
++  LOG_DEBUG(Logger, "opc_tcp_processor     | sending default error");
++
++  OutputStream << ackHeader << flush;
++}
++
+ void OpcTcpMessages::HelloClient(IStreamBinary & istream, OStreamBinary & ostream)
+ {
+   using namespace OpcUa::Binary;
+diff --git a/src/server/opc_tcp_processor.h b/src/server/opc_tcp_processor.h
+index 34e8641..d92a688 100644
+--- a/src/server/opc_tcp_processor.h
++++ b/src/server/opc_tcp_processor.h
+@@ -33,6 +33,7 @@ public:
+   ~OpcTcpMessages();
+ 
+   bool ProcessMessage(Binary::MessageType msgType, Binary::IStreamBinary & iStream);
++  void SendError();
+ 
+ private:
+   void HelloClient(Binary::IStreamBinary & istream, Binary::OStreamBinary & ostream);

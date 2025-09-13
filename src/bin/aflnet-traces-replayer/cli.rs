@@ -86,6 +86,13 @@ pub struct Cli {
         default_value = "SIGKILL"
     )]
     pub signal: Signal,
+
+    #[arg(
+        help = "Number of times to retry a failing trace",
+        long = "retries",
+        default_value = "20"
+    )]
+    pub retries: u32,
 }
 
 /// Parse a list of key-value pairs

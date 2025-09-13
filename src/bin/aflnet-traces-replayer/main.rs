@@ -198,56 +198,87 @@ fn main() -> Result<(), Error> {
             num_files,
             &file.file_name()
         );
-        let mut trace_file = BufReader::new(File::open(file)?);
-        let mut new_cov = false;
-        loop {
-            let mut size = [0u8; 4];
-            match trace_file.read_exact(&mut size) {
-                Ok(()) => {}     // more messages
-                Err(_) => break, // end of file?
-            }
-            let mut buf = vec![0u8; u32::from_le_bytes(size) as usize];
-            trace_file.read_exact(&mut buf)?;
-            {
-                let input = BytesInput::new(buf);
 
-                let (result, _) =
-                    match fuzzer.evaluate_input(&mut state, &mut executor, &mut mgr, input) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            println!("Error occurred: {}", e.to_string());
-                            break;
+        let mut success = false;
+        for attempt in 0..=cli.retries {
+            let mut trace_file = BufReader::new(File::open(&file)?);
+            let mut new_cov = false;
+            let mut connection_error = false;
+
+            loop {
+                let mut size = [0u8; 4];
+                match trace_file.read_exact(&mut size) {
+                    Ok(()) => {}     // more messages
+                    Err(_) => break, // end of file?
+                }
+                let mut buf = vec![0u8; u32::from_le_bytes(size) as usize];
+                trace_file.read_exact(&mut buf)?;
+                {
+                    let input = BytesInput::new(buf);
+
+                    let (result, _) =
+                        match fuzzer.evaluate_input(&mut state, &mut executor, &mut mgr, input) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                println!("Error occurred during trace replay: {}", e.to_string());
+                                connection_error = true;
+                                break;
+                            }
+                        };
+                    if result != ExecuteInputResult::None {
+                        new_cov = true;
+                        // Get the coverage from state
+                        let cov = state.calculate_total_coverage();
+                        // Get the current edges (the first usize) and the total edges (the second usize)
+                        let (current_edges, total_edges) = match cov {
+                            Ok((numerator, denominator)) => (numerator, denominator),
+                            Err(_) => (0, 0), // or any other default value you want to use in case of an error
+                        };
+                        //Calculate the percentage
+                        let percentage = (current_edges as f64 / total_edges as f64) * 100.0;
+                        let cov_str = format!("{:.2}%", percentage);
+                        let file_metadata = trace_file.get_ref().metadata()?;
+                        if let Ok(created) = file_metadata.modified() {
+                            let unix_timestamp = created.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                            //Append the timestamp, coverage and the current and total edges
+                            csv_buf.push_str(&format!("{},{},{},{}\n", unix_timestamp, cov_str, current_edges, total_edges));
+                        } else {
+                            // If the creation time is not available, print a warning
+                            println!("Warn: Could not get the creation time of the trace file");
                         }
-                    };
-                if result != ExecuteInputResult::None {
-                    new_cov = true;
-                    // Get the coverage from state
-                    let cov = state.calculate_total_coverage();
-                    // Get the current edges (the first usize) and the total edges (the second usize)
-                    let (current_edges, total_edges) = match cov {
-                        Ok((numerator, denominator)) => (numerator, denominator),
-                        Err(_) => (0, 0), // or any other default value you want to use in case of an error
-                    };
-                    //Calculate the percentage
-                    let percentage = (current_edges as f64 / total_edges as f64) * 100.0;
-                    let cov_str = format!("{:.2}%", percentage);
-                    let file_metadata = trace_file.get_ref().metadata()?;
-                    if let Ok(created) = file_metadata.modified() {
-                        let unix_timestamp = created.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                        //Append the timestamp, coverage and the current and total edges
-                        csv_buf.push_str(&format!("{},{},{},{}\n", unix_timestamp, cov_str, current_edges, total_edges));
-                    } else {
-                        // If the creation time is not available, print a warning
-                        println!("Warn: Could not get the creation time of the trace file");
                     }
-                    
                 }
             }
+
+            if connection_error {
+                if attempt < cli.retries {
+                    println!("Connection failed. Retrying... (Attempt {}/{})", attempt + 1, cli.retries);
+                    // reset process
+                    executor.reset_target_state()?;
+                    // run clean script if available
+                    if let Some(ref cmd) = clean_script {
+                        let mut handle = Command::new(cmd).spawn()?;
+                        handle.wait()?;
+                    }
+                } else {
+                    println!("Connection failed after {} retries. Giving up on this trace file.", cli.retries);
+                }
+                continue; // To the next retry
+            }
+
+            // If we are here, it means the inner loop completed without connection errors.
+            if !new_cov {
+                println!("Warn: This trace got us no new coverage");
+            }
+            success = true;
+            break; // Exit the retry loop
         }
-        if !new_cov {
-            println!("Warn: This trace got us no new coverage");
+
+        if !success {
+            println!("Error: Failed to process trace file [{:?}] after all retries.", &file.file_name());
         }
-        // reset process
+
+        // reset process for the next trace file
         executor.reset_target_state()?;
         // run clean script if available
         if let Some(ref cmd) = clean_script {
